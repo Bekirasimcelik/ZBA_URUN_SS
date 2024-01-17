@@ -1,0 +1,179 @@
+REPORT ZBA_URUN_SS.
+
+
+TABLES : zba_urunkayit,
+         zba_urunhareket.
+
+DATA : lt_urunkayit   TYPE TABLE OF   zba_urunkayit WITH HEADER LINE,
+       ls_urunkayit   TYPE            zba_urunkayit,
+       lt_urunhareket TYPE TABLE OF   zba_urunhareket,
+       lt_sonuc       TYPE TABLE OF   zba_urunhareket,
+       gt_urunkayit   TYPE STANDARD TABLE OF zba_urunkayit,
+       wa_urunkayit   TYPE            zba_urunkayit,
+       lo_alv         TYPE REF TO     cl_salv_table,
+       gt_fcat        TYPE            lvc_t_fcat,
+       gs_fcat        TYPE            lvc_s_fcat,
+       gs_layout      TYPE            lvc_s_layo.
+
+DATA: gv_active_tab TYPE string.
+
+TYPES : BEGIN OF ty_join,
+          urun_id        TYPE zba_urunkayit-urun_id,
+          urun_ad        TYPE  zba_urunkayit-urun_ad,
+          urun_renk      TYPE zba_urunkayit-urun_renk,
+          urun_raf       TYPE zba_urunkayit-urun_raf,
+          urun_mik       TYPE int4,
+          urun_hakk      TYPE zba_urunkayit-urun_hakk,
+          hareketid      TYPE zba_urunhareket-hareketid,
+          hareket_tipi   TYPE zba_urunhareket-hareket_tipi,
+          hareket_tarih  TYPE zba_urunhareket-hareket_tarih,
+          hareket_miktar TYPE zba_urunhareket-hareket_miktar,
+        END OF ty_join.
+
+DATA : gt_join_t TYPE STANDARD TABLE OF ty_join,
+       gs_join_t TYPE  ty_join.
+
+SELECTION-SCREEN: BEGIN OF TABBED BLOCK tabl FOR 20 LINES.
+  SELECTION-SCREEN: TAB (20) tab1 USER-COMMAND tab1 DEFAULT SCREEN 100,
+  TAB (20) tab2 USER-COMMAND tab2 DEFAULT SCREEN 101.
+SELECTION-SCREEN: END OF BLOCK tabl.
+
+SELECTION-SCREEN: BEGIN OF SCREEN 100 AS SUBSCREEN.
+  SELECT-OPTIONS: p_urnid  FOR  zba_urunkayit-urun_id,
+                  p_hrkid  FOR  zba_urunhareket-hareketid.
+SELECTION-SCREEN: END OF SCREEN 100.
+
+SELECTION-SCREEN: BEGIN OF SCREEN 101 AS SUBSCREEN.
+  PARAMETERS: p_fname TYPE localfile.
+SELECTION-SCREEN: END OF SCREEN 101.
+
+AT SELECTION-SCREEN ON VALUE-REQUEST FOR p_fname.
+  PERFORM f4_fname.
+
+INITIALIZATION.
+  tab1 = 'TAB1'.
+  tab2 = 'TAB2'.
+  gv_active_tab = 'TAB1'.
+
+AT SELECTION-SCREEN.
+  CASE sy-ucomm.
+    WHEN 'TAB1'.
+      MESSAGE 'TAB 1 clicked' TYPE 'S'.
+    WHEN 'TAB2'.
+      MESSAGE 'TAB 2 clicked' TYPE 'S'.
+    WHEN OTHERS.
+  ENDCASE.
+
+START-OF-SELECTION.
+  CASE sy-dynnr.
+    WHEN 100.
+      IF p_urnid IS NOT INITIAL AND p_hrkid IS INITIAL.
+
+        SELECT * FROM zba_urunhareket
+          RIGHT OUTER JOIN zba_urunkayit
+          ON zba_urunhareket~urun_id EQ zba_urunkayit~urun_id
+          INTO CORRESPONDING FIELDS OF TABLE @gt_join_t
+        WHERE zba_urunkayit~urun_id  IN @p_urnid .
+        PERFORM FieldCatalog.
+        PERFORM ALVReport.
+
+      ELSEIF  p_urnid IS NOT INITIAL AND p_hrkid IS NOT INITIAL.
+
+        SELECT * FROM zba_urunhareket
+         RIGHT OUTER JOIN zba_urunkayit
+         ON zba_urunhareket~urun_id EQ zba_urunkayit~urun_id
+         INTO CORRESPONDING FIELDS OF TABLE @gt_join_t
+       WHERE zba_urunkayit~urun_id  IN @p_urnid
+         AND  zba_urunhareket~hareketid  IN @p_hrkid .
+        PERFORM FieldCatalog.
+        PERFORM ALVReport.
+
+      ELSE.
+
+        MESSAGE 'standart dışı veri girişi yapılmasına izin verilmemektedir.' TYPE 'I'.
+
+      ENDIF.
+
+WHEN 200.
+
+ENDCASE.
+
+FORM f4_fname .
+  DATA: file_table TYPE filetable,
+        file_line  TYPE file_table,
+        rc         TYPE i.
+
+  CALL METHOD cl_gui_frontend_services=>file_open_dialog
+    EXPORTING
+      default_extension       = 'xlsx'
+    CHANGING
+      file_table              = file_table
+      rc                      = rc
+    EXCEPTIONS
+      file_open_dialog_failed = 1
+      cntl_error              = 2
+      error_no_gui            = 3
+      not_supported_by_gui    = 4
+      OTHERS                  = 5.
+
+  READ TABLE file_table INTO file_line INDEX 1.
+  IF sy-subrc = 0.
+    p_fname = file_line-filename.
+  ENDIF.
+ENDFORM.
+
+FORM FieldCatalog .
+  CALL FUNCTION 'LVC_FIELDCATALOG_MERGE'
+    EXPORTING
+*     I_BUFFER_ACTIVE        =
+      i_structure_name       = 'ty_join'
+*     I_CLIENT_NEVER_DISPLAY = 'X'
+*     I_BYPASSING_BUFFER     =
+*     I_INTERNAL_TABNAME     =
+    CHANGING
+      ct_fieldcat            = gt_fcat
+    EXCEPTIONS
+      inconsistent_interface = 1
+      program_error          = 2
+      OTHERS                 = 3.
+  IF sy-subrc <> 0.
+  ENDIF.
+
+  LOOP AT gt_fcat INTO gs_fcat .
+    CASE gs_fcat-fieldname .
+      WHEN 'URUNID'.
+        gs_fcat-outputlen = 10 .
+      WHEN 'URUNID' OR 'HAREKETID'.
+        gs_fcat-outputlen = 15 .
+    ENDCASE .
+    MODIFY gt_fcat FROM gs_fcat TRANSPORTING outputlen.
+
+  ENDLOOP.
+
+ENDFORM .
+
+FORM ALVReport.
+
+  CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY_LVC'
+    EXPORTING
+      i_callback_program       = sy-repid
+      i_callback_pf_status_set = 'PF_STATUS_SET'
+      i_callback_user_command  = 'USER_COMMAND'
+      is_layout_lvc            = gs_layout
+      it_fieldcat_lvc          = gt_fcat
+      i_default                = 'X'
+      i_save                   = ' '
+    TABLES
+      t_outtab                 = gt_urunkayit
+    EXCEPTIONS
+      program_error            = 1
+      OTHERS                   = 2.
+
+  IF sy-subrc <> 0.
+  ENDIF.
+
+ENDFORM .
+
+FORM pf_status_set USING p_extab TYPE slis_t_extab.
+  SET PF-STATUS 'ZBA_GUI'.
+ENDFORM.
